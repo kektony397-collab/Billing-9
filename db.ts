@@ -1,11 +1,9 @@
-
 import Dexie from 'dexie';
 import type { Table } from 'dexie';
 import { Product, Party, Invoice, CompanyProfile } from './types';
 
 /**
  * AppDatabase class extending Dexie to manage the local database.
- * Using default import for Dexie ensures proper TypeScript inheritance for inherited methods.
  */
 export class AppDatabase extends Dexie {
   products!: Table<Product>;
@@ -15,11 +13,19 @@ export class AppDatabase extends Dexie {
 
   constructor() {
     super('GopiDistributorsDB');
-    // Define the database schema version and tables
-    // version() is an instance method inherited from Dexie
-    this.version(1).stores({
+    
+    // Version 1
+    (this as any).version(1).stores({
       products: '++id, name, hsn, batch',
       parties: '++id, name, gstin',
+      invoices: '++id, invoiceNo, date, partyId',
+      settings: '++id'
+    });
+
+    // Version 2: Add indices for new fields
+    (this as any).version(2).stores({
+      products: '++id, name, hsn, batch, barcode, category',
+      parties: '++id, name, gstin, phone, isFavorite',
       invoices: '++id, invoiceNo, date, partyId',
       settings: '++id'
     });
@@ -44,6 +50,8 @@ export const seedDatabase = async () => {
       email: 'info@gopidistributor.com',
       terms: 'Bill No. is must while returning EXP. Products\nE.&.O.E.',
       theme: 'blue',
+      platformMode: 'auto',
+      darkMode: 'light',
       invoiceTemplate: 'authentic',
       useDefaultGST: true,
       defaultGSTRate: 5

@@ -3,9 +3,10 @@ import { useForm } from 'react-hook-form';
 import { db } from '../db';
 import { Party } from '../types';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { Search, Plus, Upload, Trash2, Edit2, X, Phone, MapPin, FileText, Loader2 } from 'lucide-react';
+import { Search, Plus, Upload, Trash2, Edit2, X, Phone, MapPin, Loader2, Star, User } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { toast } from 'sonner';
+import clsx from 'clsx';
 
 export const Parties: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -14,10 +15,22 @@ export const Parties: React.FC = () => {
   const [isImporting, setIsImporting] = useState(false);
   
   const parties = useLiveQuery(
-    () => db.parties
-      .filter(p => p.name.toLowerCase().includes(searchTerm.toLowerCase()))
-      .limit(50) // Limit render for perf
-      .toArray(),
+    async () => {
+      const term = searchTerm.trim();
+      if (!term) return db.parties.limit(50).toArray();
+      
+      // Attempt accurate search via Index first (faster), then fallback to filter if needed or combine
+      // Using filter for Party search is usually acceptable as parties list is smaller than products
+      // But we can optimize to use Name index
+      return db.parties
+        .filter(p => 
+          p.name.toLowerCase().includes(term.toLowerCase()) || 
+          p.phone.includes(term) ||
+          (p.gstin || '').toLowerCase().includes(term.toLowerCase())
+        )
+        .limit(50)
+        .toArray();
+    },
     [searchTerm]
   );
 
@@ -29,17 +42,24 @@ export const Parties: React.FC = () => {
         setValue(key as keyof Party, (editingParty as any)[key]);
       });
     } else {
-      reset({ type: 'WHOLESALE' });
+      reset({ type: 'WHOLESALE', creditLimit: 0, outstandingBalance: 0 });
     }
   }, [editingParty, setValue, reset]);
 
   const onSubmit = async (data: Party) => {
     try {
+      const formatted = {
+        ...data,
+        name: data.name.trim(),
+        creditLimit: Number(data.creditLimit),
+        outstandingBalance: Number(data.outstandingBalance)
+      };
+
       if (editingParty?.id) {
-        await db.parties.update(editingParty.id, data);
+        await db.parties.update(editingParty.id, formatted);
         toast.success('Party updated');
       } else {
-        await db.parties.add(data);
+        await db.parties.add(formatted);
         toast.success('Party added');
       }
       setIsModalOpen(false);
@@ -51,6 +71,12 @@ export const Parties: React.FC = () => {
     }
   };
 
+  const toggleFavorite = async (e: React.MouseEvent, party: Party) => {
+    e.stopPropagation();
+    if (!party.id) return;
+    await db.parties.update(party.id, { isFavorite: !party.isFavorite });
+  };
+
   const handleDelete = async (id: number) => {
     if (window.confirm('Delete this party?')) {
       await db.parties.delete(id);
@@ -58,17 +84,20 @@ export const Parties: React.FC = () => {
     }
   };
 
-  // Helper for smart column detection
+  // Improved Helper to find values in Excel row loosely
   const getValue = (row: any, keys: string[]) => {
     const rowKeys = Object.keys(row);
     for (const key of keys) {
       // 1. Exact match
       if (row[key] !== undefined) return row[key];
-      // 2. Case insensitive
-      const foundKey = rowKeys.find(k => k.toLowerCase().trim() === key.toLowerCase().trim());
+      
+      // 2. Case Insensitive Trimmed match
+      const foundKey = rowKeys.find(k => k.trim().toLowerCase() === key.trim().toLowerCase());
       if (foundKey) return row[foundKey];
-      // 3. Normalized
-      const cleanKey = rowKeys.find(k => k.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() === key.replace(/[^a-zA-Z0-9]/g, '').toLowerCase());
+      
+      // 3. Normalized Match (remove special chars)
+      const cleanTarget = key.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+      const cleanKey = rowKeys.find(k => k.replace(/[^a-zA-Z0-9]/g, '').toLowerCase() === cleanTarget);
       if (cleanKey) return row[cleanKey];
     }
     return '';
@@ -91,21 +120,22 @@ export const Parties: React.FC = () => {
         if (data.length === 0) throw new Error("Empty File");
 
         const partiesToAdd: any[] = data.map((row: any) => ({
-          name: String(getValue(row, ['Name', 'Party Name', 'Customer', 'Client']) || 'Unknown'),
-          gstin: String(getValue(row, ['GSTIN', 'GST', 'GST No']) || ''),
-          address: String(getValue(row, ['Address', 'Addr', 'City']) || ''),
-          phone: String(getValue(row, ['Phone', 'Mobile', 'Contact', 'Tel']) || ''),
-          email: String(getValue(row, ['Email', 'Mail']) || ''),
-          dlNo1: String(getValue(row, ['DL No 1', 'DL1', 'Drug Lic 1', '20B']) || ''),
-          dlNo2: String(getValue(row, ['DL No 2', 'DL2', 'Drug Lic 2', '21B']) || ''),
+          name: String(getValue(row, ['Name', 'Party Name', 'Customer', 'Firm Name']) || 'Unknown').trim(),
+          gstin: String(getValue(row, ['GSTIN', 'GST', 'Tin No']) || '').trim(),
+          address: String(getValue(row, ['Address', 'Addr', 'City', 'Place']) || '').trim(),
+          phone: String(getValue(row, ['Phone', 'Mobile', 'Contact', 'Ph No']) || '').trim(),
+          email: String(getValue(row, ['Email']) || '').trim(),
+          contactPerson: String(getValue(row, ['Contact Person', 'Owner', 'Proprietor']) || '').trim(),
+          creditLimit: Number(getValue(row, ['Credit Limit', 'Limit', 'Cr Limit']) || 0),
+          outstandingBalance: Number(getValue(row, ['Balance', 'Opening Balance', 'Due', 'Op Bal']) || 0),
+          dlNo1: String(getValue(row, ['DL No 1', 'DL1', 'Drug Lic 1']) || '').trim(),
+          dlNo2: String(getValue(row, ['DL No 2', 'DL2', 'Drug Lic 2']) || '').trim(),
           type: 'WHOLESALE'
-        })).filter(p => p.name !== 'Unknown');
+        })).filter(p => p.name !== 'Unknown' && p.name !== '');
 
-        // Batch insert for performance
         await db.parties.bulkAdd(partiesToAdd);
         toast.success(`Imported ${partiesToAdd.length} parties successfully!`);
       } catch (e) {
-        console.error(e);
         toast.error('Import failed. Check format.');
       } finally {
         setIsImporting(false);
@@ -120,7 +150,7 @@ export const Parties: React.FC = () => {
        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <h2 className="text-3xl font-bold text-slate-800 dark:text-white">Parties & Customers</h2>
-          <p className="text-slate-500 dark:text-slate-400">Manage your wholesale and retail contacts</p>
+          <p className="text-slate-500 dark:text-slate-400">Manage wholesale and retail contacts</p>
         </div>
         
         <div className="flex gap-3">
@@ -151,8 +181,8 @@ export const Parties: React.FC = () => {
         <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-slate-400 w-5 h-5" />
         <input
           type="text"
-          placeholder="Search by Name, GST, or Phone..."
-          className="w-full pl-12 pr-4 py-4 rounded-2xl border border-slate-200 dark:border-gray-700 focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 bg-white dark:bg-gray-800 dark:text-white shadow-sm transition-all"
+          placeholder="Search by Name, GST, Phone..."
+          className="w-full pl-12 pr-4 py-4 rounded-2xl border border-slate-200 dark:border-gray-700 focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 bg-white dark:bg-gray-800 dark:text-white shadow-sm transition-all placeholder:text-slate-400"
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
         />
@@ -160,26 +190,49 @@ export const Parties: React.FC = () => {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {parties?.map((party) => (
-          <div key={party.id} className="group bg-white dark:bg-gray-800 rounded-2xl p-6 shadow-sm border border-slate-100 dark:border-gray-700 hover:shadow-xl hover:-translate-y-1 transition-all duration-300">
-            <div className="flex justify-between items-start mb-4">
+          <div key={party.id} className="group bg-white dark:bg-gray-800 rounded-2xl p-6 shadow-sm border border-slate-100 dark:border-gray-700 hover:shadow-xl hover:-translate-y-1 transition-all duration-300 relative">
+            <button 
+              onClick={(e) => toggleFavorite(e, party)}
+              className={clsx("absolute top-6 right-6 transition-colors", party.isFavorite ? "text-yellow-400 fill-yellow-400" : "text-slate-300 hover:text-yellow-400")}
+            >
+               <Star className="w-5 h-5" />
+            </button>
+
+            <div className="flex justify-between items-start mb-4 pr-8">
               <div>
-                <h3 className="font-bold text-lg text-slate-800 dark:text-white group-hover:text-blue-600 transition-colors">{party.name}</h3>
-                <span className={`text-[10px] font-bold px-2 py-1 rounded-full uppercase tracking-wide ${party.type === 'RETAIL' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>
-                  {party.type || 'WHOLESALE'}
-                </span>
-              </div>
-              <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                 <button onClick={() => { setEditingParty(party); setIsModalOpen(true); }} className="p-2 bg-slate-100 dark:bg-gray-700 text-blue-600 rounded-lg hover:bg-blue-50"><Edit2 className="w-4 h-4" /></button>
-                 <button onClick={() => handleDelete(party.id!)} className="p-2 bg-slate-100 dark:bg-gray-700 text-red-600 rounded-lg hover:bg-red-50"><Trash2 className="w-4 h-4" /></button>
+                <h3 className="font-bold text-lg text-slate-800 dark:text-white group-hover:text-blue-600 transition-colors line-clamp-1">{party.name}</h3>
+                <div className="flex gap-2 mt-2">
+                  <span className={`text-[10px] font-bold px-2 py-1 rounded-full uppercase tracking-wide ${party.type === 'RETAIL' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' : 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'}`}>
+                    {party.type || 'WHOLESALE'}
+                  </span>
+                  {party.outstandingBalance && party.outstandingBalance > 0 ? (
+                    <span className="text-[10px] font-bold px-2 py-1 rounded-full bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-300">
+                       Due: ₹{party.outstandingBalance}
+                    </span>
+                  ) : null}
+                </div>
               </div>
             </div>
             
             <div className="space-y-3 text-sm text-slate-600 dark:text-slate-300">
-              {party.gstin && (
-                <div className="flex items-center bg-slate-50 dark:bg-gray-700/50 p-2 rounded-lg">
-                   <FileText className="w-4 h-4 mr-2 text-slate-400" />
-                   <span className="font-mono">{party.gstin}</span>
-                </div>
+              <div className="grid grid-cols-2 gap-2 text-xs mb-3">
+                 <div className="bg-slate-50 dark:bg-gray-700/50 p-2 rounded-lg">
+                    <span className="block text-slate-400 mb-0.5 uppercase text-[10px] font-bold">Credit Limit</span>
+                    <span className="font-bold">₹{party.creditLimit || '0'}</span>
+                 </div>
+                 <div className="bg-slate-50 dark:bg-gray-700/50 p-2 rounded-lg">
+                    <span className="block text-slate-400 mb-0.5 uppercase text-[10px] font-bold">Balance</span>
+                    <span className={clsx("font-bold", (party.outstandingBalance || 0) > 0 ? "text-red-500" : "text-green-500")}>
+                      ₹{party.outstandingBalance || '0'}
+                    </span>
+                 </div>
+              </div>
+
+              {party.contactPerson && (
+                 <div className="flex items-center">
+                   <User className="w-4 h-4 mr-2 text-slate-400" />
+                   {party.contactPerson}
+                 </div>
               )}
               {party.phone && (
                 <div className="flex items-center">
@@ -190,18 +243,23 @@ export const Parties: React.FC = () => {
               {party.address && (
                 <div className="flex items-start">
                   <MapPin className="w-4 h-4 mr-2 text-slate-400 mt-0.5" />
-                  <span className="line-clamp-2">{party.address}</span>
-                </div>
-              )}
-              {(party.dlNo1 || party.dlNo2) && (
-                <div className="pt-2 border-t border-slate-100 dark:border-gray-700 grid grid-cols-2 gap-2 text-xs">
-                   {party.dlNo1 && <div><span className="text-slate-400">DL 1:</span> {party.dlNo1}</div>}
-                   {party.dlNo2 && <div><span className="text-slate-400">DL 2:</span> {party.dlNo2}</div>}
+                  <span className="line-clamp-1">{party.address}</span>
                 </div>
               )}
             </div>
+
+            <div className="flex gap-2 mt-4 pt-4 border-t border-slate-100 dark:border-gray-700 opacity-60 group-hover:opacity-100 transition-opacity">
+                 <button onClick={() => { setEditingParty(party); setIsModalOpen(true); }} className="flex-1 py-2 bg-slate-100 dark:bg-gray-700 text-blue-600 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/20 text-xs font-bold flex items-center justify-center gap-2"><Edit2 className="w-3 h-3" /> Edit</button>
+                 <button onClick={() => handleDelete(party.id!)} className="px-3 py-2 bg-slate-100 dark:bg-gray-700 text-red-600 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20"><Trash2 className="w-3 h-3" /></button>
+            </div>
           </div>
         ))}
+         {parties?.length === 0 && (
+            <div className="col-span-full py-12 text-center text-slate-400 flex flex-col items-center">
+               <User className="w-12 h-12 mb-4 opacity-20" />
+               <p>No parties found matching your search.</p>
+            </div>
+         )}
       </div>
 
        {/* Modal */}
@@ -216,10 +274,15 @@ export const Parties: React.FC = () => {
             <form onSubmit={handleSubmit(onSubmit)} className="p-6 space-y-5">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                 <div className="md:col-span-2">
-                  <label className="label">Party Name</label>
+                  <label className="label">Party / Firm Name</label>
                   <input {...register('name', { required: true })} className="input-field" placeholder="Enter party name" />
                 </div>
                 
+                <div>
+                   <label className="label">Contact Person</label>
+                   <input {...register('contactPerson')} className="input-field" placeholder="Owner Name" />
+                </div>
+
                 <div>
                   <label className="label">Party Type</label>
                   <select {...register('type')} className="input-field">
@@ -237,25 +300,32 @@ export const Parties: React.FC = () => {
                   <label className="label">GSTIN</label>
                   <input {...register('gstin')} className="input-field" placeholder="GST Number" />
                 </div>
-                
-                <div>
-                  <label className="label">Email</label>
-                  <input {...register('email')} className="input-field" placeholder="Email Address" />
-                </div>
 
-                <div>
-                  <label className="label">DL No. 1 (20B)</label>
-                  <input {...register('dlNo1')} className="input-field" placeholder="Drug License 1" />
-                </div>
-
-                <div>
-                  <label className="label">DL No. 2 (21B)</label>
-                  <input {...register('dlNo2')} className="input-field" placeholder="Drug License 2" />
+                {/* Financials */}
+                <div className="p-4 bg-slate-50 dark:bg-gray-800 rounded-2xl md:col-span-2 grid grid-cols-2 gap-4 border border-slate-100 dark:border-gray-700">
+                   <div>
+                      <label className="label text-blue-600">Credit Limit (₹)</label>
+                      <input type="number" {...register('creditLimit')} className="input-field" placeholder="0" />
+                   </div>
+                   <div>
+                      <label className="label text-red-500">Opening Balance (₹)</label>
+                      <input type="number" {...register('outstandingBalance')} className="input-field" placeholder="0" />
+                   </div>
                 </div>
 
                 <div className="md:col-span-2">
                    <label className="label">Address</label>
-                   <textarea {...register('address')} className="input-field" rows={3} placeholder="Full Address" />
+                   <textarea {...register('address')} className="input-field" rows={2} placeholder="Full Address" />
+                </div>
+                
+                <div>
+                  <label className="label">DL No. 1</label>
+                  <input {...register('dlNo1')} className="input-field" />
+                </div>
+
+                <div>
+                  <label className="label">DL No. 2</label>
+                  <input {...register('dlNo2')} className="input-field" />
                 </div>
               </div>
               
@@ -268,34 +338,12 @@ export const Parties: React.FC = () => {
         </div>
       )}
       
-      {/* Styles for this component injected via style tag for scope */}
       <style>{`
-        .label {
-          display: block;
-          font-size: 0.875rem;
-          font-weight: 500;
-          color: #64748b;
-          margin-bottom: 0.25rem;
-        }
+        .label { display: block; font-size: 0.75rem; font-weight: 700; color: #64748b; margin-bottom: 0.25rem; }
         .dark .label { color: #94a3b8; }
-        .input-field {
-          width: 100%;
-          border-radius: 0.75rem;
-          border: 1px solid #e2e8f0;
-          padding: 0.75rem 1rem;
-          font-size: 0.95rem;
-          outline: none;
-          transition: all 0.2s;
-        }
-        .dark .input-field {
-          background-color: #1f2937;
-          border-color: #374151;
-          color: white;
-        }
-        .input-field:focus {
-          border-color: #3b82f6;
-          box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
-        }
+        .input-field { width: 100%; border-radius: 0.75rem; border: 1px solid #e2e8f0; padding: 0.75rem 1rem; font-size: 0.95rem; outline: none; transition: all 0.2s; }
+        .dark .input-field { background-color: #1f2937; border-color: #374151; color: white; }
+        .input-field:focus { border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1); }
       `}</style>
     </div>
   );

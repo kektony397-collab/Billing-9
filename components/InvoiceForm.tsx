@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db';
@@ -132,7 +131,7 @@ export const InvoiceForm: React.FC = () => {
 
     try {
       // transaction() is an instance method inherited from the Dexie base class
-      await db.transaction('rw', [db.invoices, db.products], async () => {
+      await (db as any).transaction('rw', [db.invoices, db.products], async () => {
         await db.invoices.add(invoice);
         for (const item of items) {
           const product = await db.products.get(item.productId);
@@ -202,14 +201,16 @@ export const InvoiceForm: React.FC = () => {
               <div className="overflow-x-auto custom-scrollbar">
                 <table className="w-full text-[11px] text-left">
                   <thead className="bg-slate-50 font-bold uppercase text-slate-500 whitespace-nowrap">
-                    <tr><th className="p-3">Item Name</th><th className="p-2">Batch</th><th className="p-2">MRP</th><th className="p-2">Qty</th><th className="p-2">Free</th><th className="p-2">Rate</th><th className="p-2">Disc%</th><th className="p-2">GST%</th><th className="p-3 text-right">Total</th><th className="p-2"></th></tr>
+                    <tr><th className="p-3">Item Name</th><th className="p-2">Batch</th><th className="p-2">MRP</th><th className="p-2">HSN</th><th className="p-2">Old MRP</th><th className="p-2">Qty</th><th className="p-2">Free</th><th className="p-2">Rate</th><th className="p-2">Disc%</th><th className="p-2">GST%</th><th className="p-3 text-right">Total</th><th className="p-2"></th></tr>
                   </thead>
                   <tbody className="divide-y divide-slate-50">
                     {items.map((item, idx) => (
                       <tr key={idx} className="hover:bg-slate-50">
                         <td className="p-3 font-bold">{item.name}</td>
-                        <td className="p-2"><input type="text" className="w-20 bg-white border border-slate-200 rounded p-1 font-mono uppercase" value={item.batch} onChange={e => updateItem(idx, 'batch', e.target.value)} /></td>
+                        <td className="p-2"><input type="text" className="w-16 bg-white border border-slate-200 rounded p-1 font-mono uppercase" value={item.batch} onChange={e => updateItem(idx, 'batch', e.target.value)} /></td>
                         <td className="p-2"><input type="number" step="0.01" className="w-14 bg-white border border-slate-200 rounded p-1" value={item.mrp} onChange={e => updateItem(idx, 'mrp', parseFloat(e.target.value)||0)} /></td>
+                        <td className="p-2"><input type="text" className="w-14 bg-white border border-slate-200 rounded p-1" value={item.hsn} onChange={e => updateItem(idx, 'hsn', e.target.value)} /></td>
+                        <td className="p-2"><input type="number" step="0.01" className="w-14 bg-white border border-slate-200 rounded p-1" value={item.oldMrp} onChange={e => updateItem(idx, 'oldMrp', parseFloat(e.target.value)||0)} /></td>
                         <td className="p-2"><input type="number" className="w-10 bg-blue-50 rounded p-1 font-bold text-center" value={item.quantity} onChange={e => updateItem(idx, 'quantity', parseInt(e.target.value)||0)} /></td>
                         <td className="p-2"><input type="number" className="w-10 bg-orange-50 rounded p-1 text-center" value={item.freeQuantity} onChange={e => updateItem(idx, 'freeQuantity', parseInt(e.target.value)||0)} /></td>
                         <td className="p-2"><input type="number" step="0.01" className="w-14 bg-white border border-slate-200 rounded p-1" value={item.saleRate} onChange={e => updateItem(idx, 'saleRate', parseFloat(e.target.value)||0)} /></td>
@@ -219,7 +220,7 @@ export const InvoiceForm: React.FC = () => {
                         <td className="p-2"><button onClick={() => setItems(items.filter((_,i)=>i!==idx))} className="text-slate-300 hover:text-red-500"><Trash2 className="w-4 h-4"/></button></td>
                       </tr>
                     ))}
-                    {items.length === 0 && <tr><td colSpan={10} className="p-12 text-center text-slate-400 italic">No products added.</td></tr>}
+                    {items.length === 0 && <tr><td colSpan={12} className="p-12 text-center text-slate-400 italic">No products added.</td></tr>}
                   </tbody>
                 </table>
               </div>

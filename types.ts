@@ -8,6 +8,8 @@ export enum GSTRate {
 
 export type AppTheme = 'blue' | 'green' | 'purple' | 'dark';
 export type InvoiceTemplate = 'standard' | 'modern' | 'thermal' | 'authentic';
+export type PlatformMode = 'windows' | 'android' | 'auto';
+export type DarkMode = 'light' | 'dark' | 'system';
 
 export interface CompanyProfile {
   id?: number;
@@ -23,6 +25,8 @@ export interface CompanyProfile {
   email: string;
   terms: string;
   theme?: AppTheme;
+  platformMode?: PlatformMode;
+  darkMode?: DarkMode;
   invoiceTemplate?: InvoiceTemplate;
   useDefaultGST?: boolean;
   defaultGSTRate?: number;
@@ -34,6 +38,9 @@ export interface Product {
   batch: string;
   expiry: string; 
   hsn: string;
+  barcode?: string; // New
+  category?: string; // New
+  location?: string; // New
   gstRate: number;
   mrp: number;
   oldMrp?: number;
@@ -54,6 +61,11 @@ export interface Party {
   dlNo2?: string; 
   type?: 'WHOLESALE' | 'RETAIL';
   stateCode?: string;
+  contactPerson?: string; // New
+  creditLimit?: number; // New
+  outstandingBalance?: number; // New
+  isFavorite?: boolean; // New
+  notes?: string; // New
 }
 
 export interface InvoiceItem extends Product {
